@@ -1,0 +1,393 @@
+<!doctype html>
+<html lang="es-MX">
+<head>
+<meta charset="utf-8">
+<title>Ajolote</title>
+<style>html,body{margin:0;background:#fff}canvas{display:block}</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script src="../../engine/flipbook.js"></script>
+<script>
+// Ajolote: a rose axolotl on a pebble. Breathing, blinks, swaying gills, one small hop.
+// Pure functions of f.frame. Every number that shapes the drawing or the motion lives in TOKENS.
+const TOKENS = {
+  period: 96,                       // loop length in frames: 8 s at 12 fps
+  ground: 176,                      // pebble top, where the feet rest (local units, y down)
+  view: 0,                          // vertical shift of the whole plate
+  scale: 1.25,                      // figure size: 25% over the 1080 reference, times f.unit
+  accent: {                         // one accent per material: the body colour
+    pencil: 'rose', riso: 'fluo_pink', crayon: 'vermilion', watercolor: 'dried_rose', charcoal: 'terracotta',
+    mokuhanga: 'persimmon', cyanotype: 'cerulean_mid', gouache: 'burnt_ochre', engraving: 'verdigris', suminagashi: 'bengara'
+  },
+  gillRose: [176, 52, 84],          // the gills lean from the body colour toward this deeper rose
+  outline: 4.2,                     // ink weight at unit 1, before scale: renders about 3 px at 1080
+  // One bean: a top half-ellipse (head) and a bottom half-ellipse (body) meet at the equator eq, so there is no neck.
+  bean: { top: -228, eq: -64, bot: 128, rx: 188, n: 2.2, bend: 120 },
+  legs: { hipX: 104, hipY: 76, ankleX: 134, ankleY: 160, r: 15, footX: 140, footY: 162, footRx: 30, footRy: 11, toe: 0.55, toeSpread: 0.4, toeW: 0.17 },
+  pebble: { cx: 0, cy: 196, rx: 178, ry: 24, n: 2.2, tone: 0.22, lumps: [[3, 0.6, 0.05], [5, 1.3, 0.025]] },
+  shadow: { cx: 26, cy: 226, rx: 200, ry: 14, n: 2, tone: 0.35, pressure: 0.3 },
+  water: { y: 214, x0: 180, x1: 372, steps: 8, bob: 2.4, freq: 1.7, w: 2.2, a: 0.8 },
+  crescent: { offset: 20, dark: 0.22, pressure: 0.28 },  // lower-right shade on the bean
+  breath: { amp: 0.015, period: 32 },
+  hop: { height: 28, keys: [[28, 0], [34, -0.12], [41, 1], [49, 0.18], [55, -0.04], [62, 0.02], [70, -0.01], [76, 0]] },
+  turn: { angle: 0.14, keys: [[28, 0], [34, -0.5], [41, 1], [49, 0.6], [56, -0.2], [64, 0.08], [72, 0], [76, 0]] },
+  blink: { starts: [17, 66], curve: [0.35, 0, 0.55, 0.85] },
+  eye: { x: 80, y: -118, rx: 22, ry: 27, dx: 6.5, dy: -9, catch: 7, w: 2.6 },
+  blush: { x: 116, y: -64, rx: 20, ry: 11, pressure: 0.45 },
+  smile: { y: -66, rx: 36, ry: 17, a0: 0.2, a1: 0.8, n: 8, w: 3.6 },
+  gill: {
+    lag: 3, sway: 0.16, inset: 12, segs: 10, stations: [0.16, 0.27, 0.38, 0.5, 0.62, 0.74, 0.86],
+    simpleStations: [0.2, 0.36, 0.52, 0.68, 0.84], // sticker mode: at 512 px the outer barb pairs are under a pixel
+    barbAngle: 0.8, barbLen: 0.36, barbBow: 0.12,
+    stem: 7.0, stemTip: 1.4, barb: 3.0, barbTip: 0.6, cut: 2.6,
+    plumes: [
+      { side: -1, y: -168, up: 0.42, len: 132, bow: 0.08, P: 24, ph: 0.00, fd: 2, fg: 1.2 },
+      { side: -1, y: -120, up: 0.08, len: 152, bow: -0.04, P: 32, ph: 0.30, fd: 3, fg: 1.0 },
+      { side: -1, y: -72, up: -0.26, len: 122, bow: 0.10, P: 16, ph: 0.55, fd: 2, fg: 0.9 },
+      { side: 1, y: -158, up: 0.36, len: 128, bow: -0.08, P: 32, ph: 0.15, fd: 3, fg: 1.1 },
+      { side: 1, y: -112, up: 0.02, len: 148, bow: 0.05, P: 24, ph: 0.70, fd: 2, fg: 1.3 },
+      { side: 1, y: -66, up: -0.30, len: 118, bow: -0.10, P: 16, ph: 0.40, fd: 4, fg: 0.8 }
+    ]
+  },
+  tail: {
+    period: 48, lag: 4, sway: 16, base: [64, 36], ctrl: [232, 118], tip: [342, 62], segs: 14,
+    width: 100, lead: 0.3, taper: 0.45, rib: 0.5, ribFrom: 3, ribTo: 10, ribW: 2
+  },
+  bubble: {
+    salt: 3, y0: 280, y1: -200, fadeIn: 0.12, fadeOut: 0.22, alpha: 0.85, w: 2.4, wob: 8,
+    list: [{ x: -400, r: 11, period: 96 }, { x: 404, r: 8, period: 48 }, { x: -372, r: 7, period: 96 }]
+  },
+  pressure: { body: 0.7, head: 0.72, tail: 0.66, legs: 0.72, feet: 0.7, eye: 1 }
+};
+
+const { TAU, arcPts, drawObject, penLine, flow, follow, seeded, seg, shade, mix, wave, clamp, rgba, polyPath } = Flipbook;
+const PAPER = [252, 250, 245]; // die-cut colour in simple mode
+
+const hopFn = flow(TOKENS.hop.keys);
+const turnFn = flow(TOKENS.turn.keys);
+const turnRad = t => turnFn(t) * TOKENS.turn.angle;
+const frac = x => x - Math.floor(x);
+
+// Eye openness 0..1. Each blink: closing, closed, opening, opening. Overlapping blinks take the lower value.
+function openness(t) {
+  const { starts, curve } = TOKENS.blink, P = TOKENS.period;
+  let o = 1;
+  for (const s of starts) {
+    const d = ((t - s) % P + P) % P;
+    if (d < curve.length) o = Math.min(o, curve[d]);
+  }
+  return o;
+}
+
+// Superellipse point at parameter angle a. n = 2 is an ellipse; larger n gives squarer, wider cheeks.
+function superAt(cx, cy, rx, ry, n, a) {
+  const c = Math.cos(a), s = Math.sin(a);
+  return [cx + rx * Math.sign(c) * Math.abs(c) ** (2 / n), cy + ry * Math.sign(s) * Math.abs(s) ** (2 / n)];
+}
+
+function superPts(cx, cy, rx, ry, n, count) {
+  const out = [];
+  for (let i = 0; i < count; i++) out.push(superAt(cx, cy, rx, ry, n, TAU * i / count));
+  return out;
+}
+
+// Pebble outline: a superellipse with two slow lumps, so it reads as a stone and not a plate.
+function pebblePts() {
+  const P = TOKENS.pebble, out = [];
+  for (let i = 0; i < 56; i++) {
+    const a = TAU * i / 56;
+    let mod = 1;
+    for (const [fr, ph, amp] of P.lumps) mod += amp * Math.sin(fr * a + ph);
+    out.push(superAt(P.cx, P.cy, P.rx * mod, P.ry * mod, P.n, a));
+  }
+  return out;
+}
+
+// Rotate (x, y) by a radians around (px, py).
+function rot(x, y, a, px, py) {
+  const c = Math.cos(a), s = Math.sin(a), dx = x - px, dy = y - py;
+  return [px + dx * c - dy * s, py + dx * s + dy * c];
+}
+
+// Half-width of the bean at height y: the top or bottom half-ellipse, whichever y falls in.
+function beanW(y) {
+  const B = TOKENS.bean, ry = y < B.eq ? B.eq - B.top : B.bot - B.eq;
+  const u = Math.min(1, Math.abs(y - B.eq) / ry);
+  return B.rx * Math.pow(Math.max(0, 1 - Math.pow(u, B.n)), 1 / B.n);
+}
+
+// Closed bean outline, sampled by height with cosine spacing so the dome and the belly both stay round.
+function beanPts() {
+  const B = TOKENS.bean, N = 56, out = [];
+  const yAt = i => B.top + (B.bot - B.top) * (1 - Math.cos(Math.PI * i / N)) / 2;
+  for (let i = 0; i <= N; i++) { const y = yAt(i); out.push([beanW(y), y]); }
+  for (let i = N - 1; i >= 1; i--) { const y = yAt(i); out.push([-beanW(y), y]); }
+  return out;
+}
+
+// Head turn: the part above the equator turns about the neck, weighted by height, so the bean bends and never tears.
+function bendPt(x, y, turn) {
+  const B = TOKENS.bean, a = turn * clamp((B.eq - y) / B.bend);
+  return rot(x, y, a, 0, B.eq);
+}
+
+// Leg: a capsule from hip to ankle, closed polygon.
+function capsule(ax, ay, bx, by, r, n) {
+  const a = Math.atan2(by - ay, bx - ax), out = [];
+  for (let i = 0; i <= n; i++) {
+    const th = a - Math.PI / 2 + Math.PI * i / n;
+    out.push([bx + r * Math.cos(th), by + r * Math.sin(th)]);
+  }
+  for (let i = 0; i <= n; i++) {
+    const th = a + Math.PI / 2 + Math.PI * i / n;
+    out.push([ax + r * Math.cos(th), ay + r * Math.sin(th)]);
+  }
+  return out;
+}
+
+// Foot: a flat oval with three toe bumps along its lower edge.
+function footPts(cx, cy, L) {
+  const out = [], N = 48;
+  for (let i = 0; i < N; i++) {
+    const a = TAU * i / N;
+    let b = 0;
+    for (const d of [-L.toeSpread, 0, L.toeSpread]) {
+      const e = (a - (Math.PI / 2 + d)) / L.toeW;
+      b += L.toe * Math.exp(-e * e);
+    }
+    out.push([cx + L.footRx * Math.cos(a) * (1 + b), cy + L.footRy * Math.sin(a) * (1 + b)]);
+  }
+  return out;
+}
+
+// One gill plume: a stem walked segment by segment (the sway travels base to tip), plus paired barbs
+// that are longest mid-plume. Each plume reads the head turn late by its own follow delay.
+function gillLocal(t, g, simple) {
+  const G = TOKENS.gill, N = G.segs, B = [g.side * (beanW(g.y) - G.inset), g.y];
+  const stations = simple ? G.simpleStations : G.stations;
+  const up = g.side < 0 ? Math.PI + g.up : -g.up;
+  const tipLag = follow(turnRad, g.fd, g.fg);
+  const heading = u => up + g.bow * u + G.sway * wave(t - u * G.lag, g.P, g.ph) + u * tipLag(t);
+  const ds = g.len / N, stem = [B];
+  let x = B[0], y = B[1];
+  for (let i = 0; i < N; i++) {
+    const hd = heading((i + 0.5) / N);
+    x += Math.cos(hd) * ds;
+    y += Math.sin(hd) * ds;
+    stem.push([x, y]);
+  }
+  const barbs = [];
+  for (const u of stations) {
+    const S = stem[Math.round(u * N)], hd = heading(u);
+    const L = g.len * G.barbLen * Math.sin(Math.PI * (0.15 + 0.7 * u));
+    for (const d of [-1, 1]) {
+      const ph = hd + d * G.barbAngle, c = Math.cos(ph), s = Math.sin(ph);
+      barbs.push([
+        S,
+        [S[0] + c * L * 0.5 - s * L * G.barbBow * d, S[1] + s * L * 0.5 + c * L * G.barbBow * d],
+        [S[0] + c * L, S[1] + s * L]
+      ]);
+    }
+  }
+  return { stem, barbs };
+}
+
+// Tail: a broad fin along a quadratic spine. The tip leads the sway, the base stays put inside the bean.
+function tailLocal(t) {
+  const T = TOKENS.tail, n = T.segs, spine = [];
+  for (let i = 0; i <= n; i++) {
+    const v = i / n, a = (1 - v) * (1 - v), b = 2 * (1 - v) * v, c = v * v;
+    const sway = T.sway * c * wave(t - v * T.lag, T.period);
+    spine.push([
+      a * T.base[0] + b * T.ctrl[0] + c * T.tip[0],
+      a * T.base[1] + b * T.ctrl[1] + c * T.tip[1] + sway,
+      v
+    ]);
+  }
+  const L = [], R = [];
+  spine.forEach((p, i) => {
+    const q = spine[Math.max(0, i - 1)], r = spine[Math.min(n, i + 1)];
+    const dx = r[0] - q[0], dy = r[1] - q[1], l = Math.hypot(dx, dy) || 1;
+    const half = T.width * (0.5 + 0.5 * Math.sin(Math.PI * Math.min(1, T.lead + (1 - T.lead) * p[2]))) * (1 - T.taper * p[2]) / 2;
+    const nx = -dy / l * half, ny = dx / l * half;
+    L.push([p[0] + nx, p[1] + ny]);
+    R.push([p[0] - nx, p[1] - ny]);
+  });
+  const rib = [];
+  for (let i = T.ribFrom; i <= T.ribTo; i++) {
+    rib.push([spine[i][0] + (L[i][0] - spine[i][0]) * T.rib, spine[i][1] + (L[i][1] - spine[i][1]) * T.rib]);
+  }
+  return { poly: L.concat(R.reverse()), rib };
+}
+
+// Clip the drawing to the outside of the polygons (outside=true) or to their evenodd region (outside=false).
+// Pencil is multiply-blended, so an overlap darkens; clipping keeps the part in front clean.
+function clipped(f, polys, fn, outside) {
+  const c = f.ctx;
+  c.save();
+  c.beginPath();
+  if (outside) c.rect(0, 0, f.w, f.h);
+  for (const p of polys) {
+    c.moveTo(p[0][0], p[0][1]);
+    for (let i = 1; i < p.length; i++) c.lineTo(p[i][0], p[i][1]);
+    c.closePath();
+  }
+  c.clip('evenodd');
+  fn();
+  c.restore();
+}
+
+// Ink stroke in the material's ink. Pencil uses the boiling pen ribbon; other materials use their stroke.
+function inkLine(f, pts, col, w, closed, a) {
+  if (pts.length < 2) return;
+  if (f.m.key === 'pencil') return penLine(f.ctx, f.R, pts, col, { w, press: 0.7, closed, a });
+  f.m.stroke(f.ctx, f.R, closed ? pts.concat([pts[0]]) : pts, col, { w, a });
+}
+
+// Solid dot, used for catchlights. Pencil uses a closed pen ribbon, since multiply cannot lighten.
+function dot(f, pts, col, rpx) {
+  if (f.m.key === 'pencil') return penLine(f.ctx, f.R, pts, col, { w: rpx * 2, press: 1, closed: true, a: 1 });
+  f.m.fill(f.ctx, f.R, pts, col, {});
+}
+
+// Tapered ribbon outline: w0 wide at the first point, w1 at the last, as one closed polygon.
+function ribbonPath(pts, w0, w1) {
+  const n = pts.length, L = [], Rt = [];
+  for (let i = 0; i < n; i++) {
+    const p = pts[Math.max(0, i - 1)], q = pts[Math.min(n - 1, i + 1)];
+    const dx = q[0] - p[0], dy = q[1] - p[1], l = Math.hypot(dx, dy) || 1;
+    const hw = (w0 + (w1 - w0) * i / (n - 1)) / 2, nx = -dy / l * hw, ny = dx / l * hw;
+    L.push([pts[i][0] + nx, pts[i][1] + ny]);
+    Rt.push([pts[i][0] - nx, pts[i][1] - ny]);
+  }
+  return L.concat(Rt.reverse());
+}
+
+function fillPolygon(f, poly, col, a) {
+  f.ctx.save();
+  f.ctx.fillStyle = rgba(col, a);
+  polyPath(f.ctx, poly);
+  f.ctx.fill();
+  f.ctx.restore();
+}
+
+function render(f) {
+  const { ctx, w, h, unit: u, frame: t, m } = f;
+  const T = TOKENS, k = T.scale * u, cx = w / 2, cy = h / 2, ol = T.outline * k;
+  const hop = hopFn(t), turn = turnRad(t), br = 1 + T.breath.amp * wave(t, T.breath.period);
+  const lift = -hop * T.hop.height, eyeOpen = openness(t);
+  const acc = m.pal[T.accent[m.key]] || m.inks[0];
+  const dark = shade(acc, T.crescent.dark);
+  const gillCol = mix(acc, T.gillRose, 0.45);
+
+  // Static layer: no breath, no hop.
+  const at = (x, y) => [cx + x * k, cy + (T.view + y) * k];
+  // Body: breathes about the ground line (feet stay put), and rides the hop.
+  const map = (x, y) => [cx + x * br * k, cy + (T.view + T.ground + (y - T.ground) * br + lift) * k];
+  // Above the equator the bean bends with the head turn; below it the belly only breathes and hops.
+  const headAt = (x, y) => { const p = bendPt(x, y, turn); return map(p[0], p[1]); };
+  // Same shape moved up-left by the crescent offset: the part left over is the lower-right shade.
+  const offUp = pts => pts.map(p => [p[0] - T.crescent.offset * k, p[1] - T.crescent.offset * k]);
+
+  f.paper();
+  f.probe('hop', hop);
+  f.probe('turn', turnFn(t));
+  f.probe('blink!', eyeOpen);
+  f.probe('breath', wave(t, T.breath.period));
+
+  // Shapes that the layers below depend on.
+  const pebble = pebblePts().map(p => at(p[0], p[1]));
+  const beanS = beanPts().map(p => headAt(p[0], p[1]));
+  const tl = tailLocal(t);
+  const legs = [-1, 1].map(s => {
+    const L = T.legs;
+    return {
+      key: s < 0 ? 'L' : 'R',
+      leg: capsule(s * L.hipX, L.hipY, s * L.ankleX, L.ankleY, L.r, 8).map(p => map(p[0], p[1])),
+      foot: footPts(s * L.footX, L.footY, L).map(p => map(p[0], p[1]))
+    };
+  });
+
+  // Ground: hatch shadow under the pebble, low water line, bubbles rising from below it.
+  clipped(f, [pebble], () => drawObject(f, 'shadow', superPts(T.shadow.cx, T.shadow.cy, T.shadow.rx, T.shadow.ry, T.shadow.n, 40).map(p => at(p[0], p[1])),
+    { fill: mix(m.paper, m.ink, T.shadow.tone), outline: false, pressure: T.shadow.pressure, layers: 1, angle: 0.9 }), true);
+  for (const s of [-1, 1]) {
+    const row = [];
+    for (let i = 0; i <= T.water.steps; i++) {
+      const u2 = i / T.water.steps, x = s * (T.water.x0 + (T.water.x1 - T.water.x0) * u2);
+      row.push(at(x, T.water.y + Math.sin(i * T.water.freq + s) * T.water.bob));
+    }
+    inkLine(f, row, m.ink, T.water.w * k, false, T.water.a);
+  }
+  T.bubble.list.forEach((b, i) => {
+    const phase = seeded(i, T.bubble.salt), p = frac(t / b.period + phase);
+    const a = T.bubble.alpha * seg(p, 0, T.bubble.fadeIn) * (1 - seg(p, 1 - T.bubble.fadeOut, 1));
+    if (a < 0.02) return;
+    const x = b.x + T.bubble.wob * wave(t, b.period, phase), y = T.bubble.y0 + (T.bubble.y1 - T.bubble.y0) * p;
+    inkLine(f, superPts(x, y, b.r, b.r, 2, 18).map(q => at(q[0], q[1])), m.ink, T.bubble.w * k, true, a);
+  });
+  drawObject(f, 'pebble', pebble, { fill: mix(m.paper, m.ink, T.pebble.tone), w: ol, pressure: T.pressure.feet, layers: 2, angle: 0.3 });
+
+  // Tail: behind the bean. Its root hides in the body, and its outline stops at the bean edge.
+  clipped(f, [beanS], () => {
+    drawObject(f, 'tail', tl.poly.map(p => map(p[0], p[1])), { fill: acc, w: ol, pressure: T.pressure.tail, layers: 2, angle: 0.4 });
+    inkLine(f, tl.rib.map(p => map(p[0], p[1])), dark, T.tail.ribW * k, false, 0.8);
+  }, true);
+
+  // Gills: behind the bean. Each stem is thick at the root and thins to the tip; barbs sit along it.
+  const G = T.gill;
+  clipped(f, [beanS], () => {
+    const parts = [];
+    for (const g of G.plumes) {
+      const gl = gillLocal(t, g, f.simple);
+      parts.push({ p: gl.stem.map(q => headAt(q[0], q[1])), w0: G.stem * k, w1: G.stemTip * k, a: 0.95 });
+      for (const b of gl.barbs) parts.push({ p: b.map(q => headAt(q[0], q[1])), w0: G.barb * k, w1: G.barbTip * k, a: 0.9 });
+    }
+    if (m.key !== 'pencil') {
+      for (const it of parts) inkLine(f, it.p, gillCol, (it.w0 + it.w1) / 2, false, it.a);
+      return;
+    }
+    if (f.simple) for (const it of parts) fillPolygon(f, ribbonPath(it.p, it.w0 + 2 * G.cut * k, it.w1 + 2 * G.cut * k), PAPER, 1);
+    for (const it of parts) fillPolygon(f, ribbonPath(it.p, it.w0, it.w1), gillCol, it.a);
+  }, true);
+
+  // Legs: behind the bean, each leg hides behind its own foot.
+  clipped(f, [beanS], () => {
+    for (const l of legs) {
+      clipped(f, [l.foot], () => drawObject(f, 'leg' + l.key, l.leg, { fill: acc, w: ol, pressure: T.pressure.legs, layers: 2, angle: 0.8 }), true);
+      drawObject(f, 'foot' + l.key, l.foot, { fill: acc, w: ol, pressure: T.pressure.feet, layers: 2, angle: 0.2 });
+    }
+  }, true);
+
+  // The bean: head and body as one shape, with its lower-right shade.
+  drawObject(f, 'bean', beanS, { fill: acc, w: ol, pressure: T.pressure.body, layers: 2, angle: 0.55 });
+  clipped(f, [beanS, offUp(beanS)], () => drawObject(f, 'beanShade', beanS,
+    { fill: dark, outline: false, pressure: T.crescent.pressure, layers: 1, angle: 0.9 }), false);
+
+  // Cheeks, eyes, smile, catchlights.
+  for (const s of [-1, 1]) {
+    const B = T.blush;
+    drawObject(f, s < 0 ? 'blushL' : 'blushR', superPts(s * B.x, B.y, B.rx, B.ry, 2, 20).map(p => headAt(p[0], p[1])),
+      { fill: dark, outline: false, pressure: B.pressure, layers: 1, angle: 0.9 });
+  }
+  for (const s of [-1, 1]) {
+    const ex = s * T.eye.x, ey = T.eye.y;
+    drawObject(f, s < 0 ? 'eyeL' : 'eyeR', superPts(ex, ey, T.eye.rx, T.eye.ry * Math.max(0.12, eyeOpen), 2, 22).map(p => headAt(p[0], p[1])),
+      { fill: m.ink, ink: m.ink, w: T.eye.w * k, pressure: T.pressure.eye, layers: 3, angle: 0.4, cut: false });
+    const lit = Math.min(1, Math.max(0, (eyeOpen - 0.4) / 0.5)), rc = T.eye.catch * lit;
+    if (rc > 0.2) dot(f, superPts(ex + T.eye.dx, ey + T.eye.dy, rc, rc, 2, 16).map(p => headAt(p[0], p[1])), m.paper, rc * k);
+  }
+  const smile = arcPts(0, T.smile.y, T.smile.rx, T.smile.ry, Math.PI * T.smile.a0, Math.PI * T.smile.a1, T.smile.n);
+  inkLine(f, smile.map(p => headAt(p[0], p[1])), m.ink, T.smile.w * k, false, 0.95);
+}
+
+const canvas = document.getElementById('c');
+// Options are literal so lint can check the loop (FB005). They match TOKENS.period.
+window.anim = new Flipbook.Animator(canvas, render, {
+  width: 1080, height: 1080, fps: 12, frames: 96, boilHold: 2, boilVariants: 3, loop: true, restFrame: 0
+});
+window.anim.play();
+</script>
+</body>
+</html>

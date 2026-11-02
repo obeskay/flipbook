@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="es-MX">
+<head>
+<meta charset="utf-8">
+<title>Canción escrita</title>
+<style>html, body { margin: 0; background: #f5efe3; } canvas { display: block; }</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<script>
+// Each word is inked while it is sung: start and end in seconds. verse holds the lyric lines; the words list
+// must match them word for word (the scene checks this when it lays out).
+const TOKENS = {
+  fps: 12,
+  frames: 120,                       // 10 s; the last frame is the rest pose
+  fadeFrames: 6,                     // the pencil leaves the line over this many frames after the last word
+  size: 88,                          // word size at unit 1 (1080 px short side)
+  side: 90,                          // side margin (unit)
+  pencil: 150,                       // pencil length (unit)
+  tilt: -0.8,                        // radians: the body leans back up and to the right from the tip, as a hand holds it
+  verse: [
+    'Me queda una hoja en blanco',
+    'y un lápiz sin punta',
+    'para volver a empezar'
+  ],
+  words: [
+    { text: 'Me', start: 0.5, end: 0.9 },
+    { text: 'queda', start: 0.9, end: 1.4 },
+    { text: 'una', start: 1.4, end: 1.75 },
+    { text: 'hoja', start: 1.75, end: 2.25 },
+    { text: 'en', start: 2.25, end: 2.6 },
+    { text: 'blanco', start: 2.6, end: 3.2 },
+    { text: 'y', start: 3.6, end: 3.9 },
+    { text: 'un', start: 3.9, end: 4.2 },
+    { text: 'lápiz', start: 4.2, end: 4.8 },
+    { text: 'sin', start: 4.8, end: 5.15 },
+    { text: 'punta', start: 5.15, end: 5.8 },
+    { text: 'para', start: 6.2, end: 6.6 },
+    { text: 'volver', start: 6.6, end: 7.1 },
+    { text: 'a', start: 7.1, end: 7.35 },
+    { text: 'empezar', start: 7.35, end: 8.2 }
+  ]
+};
+</script>
+<script src="../../engine/flipbook.js"></script>
+<script>
+const { clamp, seg, wrap, measure, GL, stream, lerp, rrect } = Flipbook;
+
+// Advance of a string in px, the same rule write() uses: every glyph moves (w + 0.1) em.
+const advance = (s, sz) => { let x = 0; for (const c of s) x += ((GL[c] || GL[' ']).w + 0.1) * sz; return x; };
+
+// Layout for one frame size: rows of words with their absolute strokes. Cached per size.
+let layoutCache = { key: '' };
+function layoutFor(w, h, U) {
+  const key = `${w}x${h}`;
+  if (layoutCache.key === key) return layoutCache;
+  const sz = TOKENS.size * U, lh = sz * 1.5, maxW = w - 2 * TOKENS.side * U;
+  const rows = [];
+  let wi = 0;
+  for (const line of TOKENS.verse) {
+    for (const sub of wrap(line, maxW, sz)) rows.push(sub);
+  }
+  const words = [];
+  rows.forEach((sub, r) => {
+    const y = (r - (rows.length - 1) / 2) * lh;   // centred on 0 for now; shifted to the page below
+    const x0 = (w - measure(sub, sz)) / 2;
+    let at = 0;
+    for (const tok of sub.split(' ')) {
+      const src = TOKENS.words[wi];
+      if (!src || src.text !== tok) throw new Error(`words[${wi}] is "${src && src.text}" but the verse says "${tok}"`);
+      const x = x0 + advance(sub.slice(0, at), sz);
+      const strokes = [];
+      let px = x;
+      for (const c of tok) {
+        const g = GL[c] || GL[' '];
+        for (const st of g.s || []) strokes.push(st.map(p => [px + p[0] * sz, y + (p[1] - 1) * sz]));
+        px += (g.w + 0.1) * sz;
+      }
+      const len = strokes.reduce((a, pts) => a + polyLen(pts), 0);
+      words.push({
+        text: tok, x, y, strokes, len,
+        fs: Math.round(src.start * TOKENS.fps), fe: Math.round(src.end * TOKENS.fps)
+      });
+      at += tok.length + 1;
+      wi++;
+    }
+  });
+  if (wi !== TOKENS.words.length) throw new Error(`verse has ${wi} words, words list has ${TOKENS.words.length}`);
+  // Centre the stanza by its ink box, measured once from the final strokes: the page never shifts while it is written.
+  let lo = Infinity, hi = -Infinity;
+  for (const wd of words) for (const pts of wd.strokes) for (const [, py] of pts) { lo = Math.min(lo, py); hi = Math.max(hi, py); }
+  const dy = h / 2 - (lo + hi) / 2;
+  for (const wd of words) {
+    wd.y += dy;
+    wd.strokes = wd.strokes.map(pts => pts.map(([px, py]) => [px, py + dy]));
+  }
+  layoutCache = { key, sz, words, rows: rows.length };
+  return layoutCache;
+}
+
+function polyLen(pts) {
+  let L = 0;
+  for (let i = 1; i < pts.length; i++) L += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+  return L;
+}
+
+// The first d px of a run of strokes, as polylines (the ink so far).
+function inkSoFar(strokes, d) {
+  const out = [];
+  for (const pts of strokes) {
+    if (d <= 0) break;
+    const L = polyLen(pts);
+    if (d >= L) { out.push(pts); d -= L; continue; }
+    const cut = [pts[0]];
+    let acc = 0;
+    for (let i = 1; i < pts.length; i++) {
+      const [ax, ay] = pts[i - 1], [bx, by] = pts[i];
+      const s = Math.hypot(bx - ax, by - ay);
+      if (acc + s >= d) {
+        const t = s ? (d - acc) / s : 0;
+        cut.push([ax + (bx - ax) * t, ay + (by - ay) * t]);
+        break;
+      }
+      cut.push(pts[i]);
+      acc += s;
+    }
+    out.push(cut);
+    break;
+  }
+  return out;
+}
+
+// Pen position and heading after d px of a run of strokes.
+function tipOf(strokes, d) {
+  let last = { x: strokes[0][0][0], y: strokes[0][0][1], ang: 0 };
+  for (const pts of strokes) {
+    for (let i = 1; i < pts.length; i++) {
+      const [ax, ay] = pts[i - 1], [bx, by] = pts[i];
+      const len = Math.hypot(bx - ax, by - ay), ang = Math.atan2(by - ay, bx - ax);
+      if (d <= len) { const t = len ? d / len : 0; return { x: ax + (bx - ax) * t, y: ay + (by - ay) * t, ang }; }
+      d -= len;
+      last = { x: bx, y: by, ang };
+    }
+  }
+  return last;
+}
+
+// A sharpened yellow pencil with a ferrule and an eraser. The graphite point is at (x, y); the body leans back at
+// TOKENS.tilt, as a hand holds it. Local x runs from the point back along the body, local y across it.
+const PENCIL = { body: [242, 198, 58], wood: [234, 206, 160], metal: [176, 181, 190], eraser: [229, 143, 155] };
+function drawPencil(f, x, y, s) {
+  const { ctx, R, m, unit: U } = f;
+  const bx = Math.cos(TOKENS.tilt), by = Math.sin(TOKENS.tilt), nx = -by, ny = bx;
+  const at = (lx, ly) => [x + lx * bx + ly * nx, y + lx * by + ly * ny];
+  const k = 0.075 * s, cone = 0.12 * s, era = 0.1 * s, fer = 0.07 * s, b1 = s - era - fer, b2 = s - era;
+  const part = (key, local, col) => {
+    const pts = local.map(([lx, ly]) => at(lx, ly));
+    m.fill(ctx, f.still(key), pts, col);
+    m.stroke(ctx, R, [...pts, pts[0]], m.ink, { w: 2.2 * U });
+  };
+  part('pencil:body', [[cone, -k], [b1, -k], [b1, k], [cone, k]], PENCIL.body);
+  part('pencil:cone', [[0, 0], [cone, -k], [cone, k]], PENCIL.wood);
+  part('pencil:ferrule', [[b1, -k * 1.06], [b2, -k * 1.06], [b2, k * 1.06], [b1, k * 1.06]], PENCIL.metal);
+  part('pencil:eraser', rrect(b2, -k, s, k, k * 0.5), PENCIL.eraser);
+  const point = [[0, 0], [cone * 0.3, -k * 0.2], [cone * 0.3, k * 0.2]].map(([lx, ly]) => at(lx, ly));
+  m.fill(ctx, f.still('pencil:lead'), point, m.ink);
+}
+
+// Where the pencil is on frame fr, or null. Inking moves it along the word; between words it travels.
+function pencilAt(L, fr) {
+  const W = L.words, first = W[0], last = W[W.length - 1];
+  if (fr < first.fs - 3 || fr >= last.fe + TOKENS.fadeFrames) return null;
+  const k = W.findIndex(wd => fr >= wd.fs && fr < wd.fe);
+  if (k >= 0) {
+    const wd = W[k];
+    return { ...tipOf(wd.strokes, wd.len * (fr - wd.fs) / (wd.fe - wd.fs)), alpha: 1 };
+  }
+  const done = W.filter(wd => fr >= wd.fe), next = W.find(wd => fr < wd.fs);
+  if (!done.length) return { x: first.strokes[0][0][0], y: first.strokes[0][0][1], ang: 0, alpha: 1 };
+  const prev = done[done.length - 1], from = tipOf(prev.strokes, prev.len);
+  if (!next) return { ...from, alpha: 1 - seg(fr, last.fe, last.fe + TOKENS.fadeFrames) };
+  const to = next.strokes[0][0], t = seg(fr, prev.fe, next.fs);
+  const ang = Math.hypot(to[0] - from.x, to[1] - from.y) > 1 ? Math.atan2(to[1] - from.y, to[0] - from.x) : from.ang;
+  return { x: lerp(from.x, to[0], t), y: lerp(from.y, to[1], t), ang, alpha: 1 };
+}
+
+function render(f) {
+  const { ctx, R, w, h, unit: U, m, frame: fr } = f;
+  f.paper();
+  const L = layoutFor(w, h, U);
+
+  // One tremor stream per word, drawn in fixed order each frame, so a word keeps its shake while it is inked.
+  const WR = L.words.map(() => stream(Math.floor(R() * 4294967296)));
+
+  const trace = globalThis.__FLIPBOOK_TRACE__;
+  L.words.forEach((wd, i) => {
+    // The same boxes write() records, so check.mjs can test overlap and the frame edges.
+    if (Array.isArray(trace)) trace.push({ kind: 'text', text: wd.text, x0: wd.x, y0: wd.y - L.sz, x1: wd.x + measure(wd.text, L.sz), y1: wd.y + 0.4 * L.sz, sz: L.sz, frame: fr });
+    if (fr < wd.fs) return;
+    const done = fr >= wd.fe;
+    const pieces = done ? wd.strokes : inkSoFar(wd.strokes, wd.len * (fr - wd.fs) / (wd.fe - wd.fs));
+    const col = done ? m.ink : m.inks[0];   // the word being sung is in the accent; sung words go to ink
+    pieces.forEach(pts => m.stroke(ctx, WR[i], pts, col, { w: L.sz * 0.115, press: 0.8, a: 0.9, nib: 0.3 }));
+  });
+
+  const p = pencilAt(L, fr);
+  if (p) {
+    ctx.save();
+    ctx.globalAlpha = p.alpha;
+    drawPencil(f, p.x, p.y, TOKENS.pencil * U);
+    ctx.restore();
+  }
+}
+
+window.anim = new Flipbook.Animator(document.getElementById('stage'), render, {
+  width: 1080, height: 1080, fps: TOKENS.fps, frames: TOKENS.frames, seed: 42,
+  boilHold: 2, boilVariants: 3, loop: false, restFrame: TOKENS.frames - 1, material: 'pencil'
+});
+window.anim.play();
+</script>
+</body>
+</html>

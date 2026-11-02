@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="es-MX">
+<head>
+<meta charset="utf-8">
+<title>Dibujar un SVG</title>
+<style>html, body { margin: 0; background: #f5efe3; } canvas { display: block; }</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<script>
+const TOKENS = {
+  frames: 132,                     // 9 s at 12 fps; the last frame is the rest pose
+  pen: [6, 42],                    // frames the pen runs over the outlines
+  colour: [42, 114],                // frames the fills come in (a big disc needs a long ramp or the paper flashes)
+  colorFrom: 0.7,                  // drawOn phase split: outlines to 0.7, fills after
+  margin: { side: 80, top: 110, bottom: 110 }   // in unit (1080 px short side)
+};
+</script>
+<script src="art.js"></script>
+<script src="../../engine/flipbook.js"></script>
+<script>
+const { clamp, svgStrokes, drawOn } = Flipbook;
+
+// Stroke list for the art, cached per box size: svgStrokes parses the SVG once per layout.
+let strokeCache = { key: '', S: [] };
+function strokesFor(bw, bh) {
+  const key = `${bw}x${bh}`;
+  if (strokeCache.key !== key) strokeCache = { key, S: svgStrokes(window.ART, { w: bw, h: bh, margin: 0 }) };
+  return strokeCache.S;
+}
+
+// Pen progress 0..1 over the whole reveal: outlines to colorFrom, then fills to 1.
+function progressAt(fr) {
+  const cf = TOKENS.colorFrom, [p0, p1] = TOKENS.pen, [c0, c1] = TOKENS.colour;
+  if (fr < p1) return cf * clamp((fr - p0) / (p1 - p0));
+  return cf + (1 - cf) * clamp((fr - c0) / (c1 - c0));
+}
+
+// Point and heading where drawOn's pen is after `budget` px of outline (same walk as drawOn).
+function penTip(S, budget) {
+  let tip = null;
+  for (const s of S) {
+    if (budget <= 0) break;
+    const pts = s.pts, n = pts.length;
+    if (budget >= s.len) {
+      const a = pts[n - 2], b = pts[n - 1];
+      tip = { pt: b, ang: Math.atan2(b[1] - a[1], b[0] - a[0]) };
+      budget -= s.len;
+      continue;
+    }
+    let acc = 0;
+    for (let i = 1; i < n; i++) {
+      const [ax, ay] = pts[i - 1], [bx, by] = pts[i];
+      const L = Math.hypot(bx - ax, by - ay);
+      if (acc + L >= budget) {
+        const t = L ? (budget - acc) / L : 0;
+        return { pt: [ax + (bx - ax) * t, ay + (by - ay) * t], ang: Math.atan2(by - ay, bx - ax) };
+      }
+      acc += L;
+    }
+    return tip;
+  }
+  return tip;
+}
+
+// A small hand pencil, tip at (x, y), pointing along ang.
+function drawPencil(f, x, y, ang, s) {
+  const { ctx, R, m, unit: U } = f;
+  const c = Math.cos(ang), sn = Math.sin(ang);
+  const at = ([lx, ly]) => [x + lx * c - ly * sn, y + lx * sn + ly * c];
+  const k = 0.12 * s;   // half width of the body
+  const body = [[0, 0], [-0.26 * s, -k], [-s, -k], [-s, k], [-0.26 * s, k]].map(at);
+  const cone = [[0, 0], [-0.26 * s, -k], [-0.26 * s, k]].map(at);
+  m.fill(ctx, f.still('pencil:body'), body, [201, 162, 122]);
+  m.fill(ctx, f.still('pencil:cone'), cone, m.ink);
+  m.stroke(ctx, R, [...body, body[0]], m.ink, { w: 2 * U });
+}
+
+function render(f) {
+  const { w, h, unit: U, frame: fr } = f;
+  f.paper();
+
+  const x0 = TOKENS.margin.side * U, y0 = TOKENS.margin.top * U;
+  const bw = w - 2 * x0, bh = h - y0 - TOKENS.margin.bottom * U;
+  const S = strokesFor(bw, bh);
+  const P = progressAt(fr);
+  drawOn(f, S, P, { colorFrom: TOKENS.colorFrom, x: x0, y: y0 });
+
+  // The pen is visible only while it runs the outlines.
+  if (fr >= TOKENS.pen[0] && fr < TOKENS.pen[1]) {
+    const total = S.reduce((a, s) => a + s.len, 0);
+    const tip = penTip(S, total * clamp(P / TOKENS.colorFrom));
+    if (tip) drawPencil(f, tip.pt[0] + x0, tip.pt[1] + y0, tip.ang, 64 * U);
+  }
+}
+
+window.anim = new Flipbook.Animator(document.getElementById('stage'), render, {
+  width: 1080, height: 1080, fps: 12, frames: TOKENS.frames, seed: 42,
+  boilHold: 2, boilVariants: 3, loop: false, restFrame: TOKENS.frames - 1, material: 'pencil'
+});
+window.anim.play();
+</script>
+</body>
+</html>

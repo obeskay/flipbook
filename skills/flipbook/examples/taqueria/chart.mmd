@@ -1,0 +1,17 @@
+stateDiagram-v2
+  state "en la fila" as s0
+  state "pediste" as s1
+  state "ya no hay pastor" as s2
+  state "pagaste" as s3
+  state "pagaste sin tacos" as s4
+  state "en tu mano" as s5
+  state "te vas sin tacos" as s6
+  [*] --> s0
+  s0 --> s1 : pides
+  s1 --> s2 : se acaba
+  s1 --> s3 : pagas
+  s2 --> s4 : pagas
+  s3 --> s5 : te sirven
+  s4 --> s6 : te devuelven el dinero
+  class s4 broken
+  classDef broken stroke:#b03a2e,stroke-width:2px

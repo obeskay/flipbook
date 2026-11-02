@@ -1,0 +1,32 @@
+{
+  "name": "flipbook",
+  "owner": {
+    "name": "ov",
+    "url": "https://github.com/obeskay"
+  },
+  "metadata": {
+    "description": "Turn a process, numbers, an SVG or a script into a living hand-drawn animation, checked on real pixels. A process is model-checked while it is drawn.",
+    "version": "2.0.0"
+  },
+  "plugins": [
+    {
+      "name": "flipbook",
+      "source": "./",
+      "description": "Turn a process, numbers, an SVG or a script into a living hand-drawn animation, checked on real pixels. A process is model-checked while it is drawn.",
+      "version": "2.0.0",
+      "author": {
+        "name": "ov"
+      },
+      "license": "MIT",
+      "keywords": [
+        "animation",
+        "hand-drawn",
+        "canvas",
+        "flipbook",
+        "explainer",
+        "model-checking",
+        "sticker"
+      ]
+    }
+  ]
+}

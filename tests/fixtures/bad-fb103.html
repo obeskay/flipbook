@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="es-MX">
+<head>
+<meta charset="utf-8">
+<title>Fixture: cuadro en blanco</title>
+<style>html,body{margin:0;background:#e9e2d0}canvas{display:block;margin:0 auto}</style>
+<script src="../../skills/flipbook/engine/flipbook.js"></script>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+const TOKENS = { label: 'Hola, mañana', size: 56 };
+const canvas = document.getElementById('c');
+
+// Flat sheet, nothing drawn on it: every frame is one colour.
+function render(f) {
+  const { ctx, w, h } = f;
+  ctx.fillStyle = '#f5efe3';
+  ctx.fillRect(0, 0, w, h);
+}
+
+window.anim = new Flipbook.Animator(canvas, render, {
+  width: 1080, height: 1080, fps: 12, frames: 24, boilHold: 2, boilVariants: 3, loop: true, seed: 7
+});
+window.anim.play();
+</script>
+</body>
+</html>

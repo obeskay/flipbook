@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="es-MX">
+<head>
+<meta charset="utf-8">
+<title>Fixture: costura de loop</title>
+<style>html,body{margin:0;background:#e9e2d0}canvas{display:block;margin:0 auto}</style>
+<script src="../../skills/flipbook/engine/flipbook.js"></script>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+const TOKENS = { block: 260, accent: '#b8392b' };
+const canvas = document.getElementById('c');
+
+// A block that slides from 10% to 90% of the width over the loop, then snaps back: the seam is a jump.
+function render(f) {
+  const { ctx, w, h, t, unit } = f;
+  f.paper();
+  const size = TOKENS.block * unit;
+  ctx.fillStyle = TOKENS.accent;
+  ctx.fillRect(w * (0.1 + 0.8 * t), h * 0.5 - size / 2, size, size);
+}
+
+window.anim = new Flipbook.Animator(canvas, render, {
+  width: 1080, height: 1080, fps: 12, frames: 24, boilHold: 2, boilVariants: 3, loop: true, seed: 7
+});
+window.anim.play();
+</script>
+</body>
+</html>

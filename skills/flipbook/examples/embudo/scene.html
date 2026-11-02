@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="es-MX">
+<head>
+<meta charset="utf-8">
+<title>Embudo</title>
+<style>html, body { margin: 0; background: #f5efe3; } canvas { display: block; }</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<script>
+const TOKENS = {
+  frames: 60,                       // 5 s at 12 fps
+  note: 'aquí se van',
+  sizes: { note: 34 },              // at unit 1 (1080 px short side)
+  at: { funnel: [4, 28], ring: [30, 42], note: [42, 54] }   // frame spans
+};
+</script>
+<script src="data.js"></script>
+<script src="../../engine/flipbook.js"></script>
+<script>
+const { seg, clamp, TAU, arcPts, write, measure, drawFunnel, funnelLayout } = Flipbook;
+
+const fmt = v => Number(v).toLocaleString('es-MX');
+const stages = (window.DATA && window.DATA.stages) || [];
+const vals = stages.map(s => Math.max(0, Number(s.value) || 0));
+
+function render(f) {
+  const { ctx, R, w, h, unit, m, frame: fr } = f;
+  const ink = m.ink, accent = m.inks[0];
+  const span = name => seg(fr, TOKENS.at[name][0], TOKENS.at[name][1]);
+  // Wide frames show less text per pixel on a phone: lift the type scale there, keep the rest of unit.
+  const U = unit * (w / h > 1.2 ? 1.25 : 1);
+  f.paper();
+
+  // No title: the funnel takes the frame, so each row has the height its label needs.
+  const box = { x: 110 * U, y: 80 * U, w: w - 220 * U, h: h - 130 * U };
+  if (!stages.length) return;
+  const p = clamp((fr - TOKENS.at.funnel[0]) / (TOKENS.at.funnel[1] - TOKENS.at.funnel[0]));
+  drawFunnel({ ...f, unit: U }, stages, box, { p });
+
+  // The ring loops the percent of the biggest drop. The note sits right of the ring, on the same line.
+  const L = funnelLayout(stages, box, U), d = L.drop;
+  if (d < 0) return;
+  const cy = L.pctY[d], rx = L.strip[d + 1].w / 2 + 30 * U, ry = L.pctSz * 0.62 + 6 * U;
+
+  const q = clamp((fr - TOKENS.at.ring[0]) / (TOKENS.at.ring[1] - TOKENS.at.ring[0]));
+  if (q > 0) {
+    const a0 = -0.9;
+    m.stroke(ctx, R, arcPts(L.cx, cy, rx, ry, a0, a0 + TAU * 1.08 * q, 40), accent, { w: 3.4 * U, a: 0.95 });
+  }
+
+  const na = span('note');
+  if (na > 0.01) {
+    const text = `${TOKENS.note} ${fmt(vals[d] - vals[d + 1])}`, x0 = L.cx + rx + 20 * U, avail = box.x + box.w - x0;
+    let sz = TOKENS.sizes.note * U;
+    if (measure(text, sz) > avail) sz *= avail / measure(text, sz) * 0.97;
+    write(ctx, R, text, x0, cy + 0.5 * sz, sz, { col: accent, a: 0.95 * na });
+  }
+}
+
+window.anim = new Flipbook.Animator(document.getElementById('stage'), render, {
+  width: 1080, height: 1080, fps: 12, frames: TOKENS.frames, seed: 42,
+  boilHold: 2, boilVariants: 3, loop: false, restFrame: TOKENS.frames - 1, material: 'pencil'
+});
+window.anim.play();
+</script>
+</body>
+</html>

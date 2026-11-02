@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="es-MX">
+<head>
+<meta charset="utf-8">
+<title>Fixture: la escena lanza antes de window.anim</title>
+<style>html,body{margin:0;background:#e9e2d0}canvas{display:block;margin:0 auto}</style>
+<script src="../../skills/flipbook/engine/flipbook.js"></script>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+// The layout cannot fit 300 px boxes in a square frame, so the script throws before it sets window.anim.
+window.FLOW = Flipbook.defineFlow({
+  name: 'dos', init: { x: 'a' }, view: s => s.x,
+  steps: { Ida: { label: 'ida', when: s => s.x === 'a', do: () => ({ x: 'b' }) } }, rules: {}
+});
+const CHECK = Flipbook.checkFlow(window.FLOW);
+const L = Flipbook.layoutFlow(CHECK, { w: 1080, h: 1080, dir: 'TB', sz: 300 });
+window.anim = new Flipbook.Animator(document.getElementById('c'), () => {}, { width: 1080, height: 1080, frames: 24 });
+</script>
+</body>
+</html>

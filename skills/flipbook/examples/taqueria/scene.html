@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="es-MX">
+<head>
+<meta charset="utf-8">
+<title></title>
+<style>html,body{margin:0;background:#e9e2d0}canvas{display:block;margin:0 auto}</style>
+<script src="../../engine/flipbook.js"></script>
+<script src="flow.js"></script>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+// Sizes are px on a 1080 canvas. U = min(w, h) / 1080 scales them to the frame (the same as f.unit).
+const TOKENS = {
+  title: 'Una orden en la taquería',
+  rule: 'Se rompió la regla:\nnunca te cobran sin tacos.',
+  happy: 'en tu mano',                 // the view the happy walk ends on (a view name from flow.js)
+  boxSz: 40, ruleSz: 56, pageM: 40, fps: 12, drawFrames: 40
+};
+document.title = TOKENS.title;
+
+const FPS = TOKENS.fps;
+const canvas = document.getElementById('c');
+const Q = new URLSearchParams(location.search);
+const W = Number(Q.get('w') || 1080), H = Number(Q.get('h') || 1080);
+const U = Math.min(W, H) / 1080;
+
+// The process is checked here, on load. The drawing below is built from these results only.
+const CHECK = Flipbook.checkFlow(FLOW);
+// Shortest path to a view as checkFlow reports it: a rule that says "not there yet" breaks on arrival.
+const pathTo = view => Flipbook.checkFlow({ ...FLOW, rules: { llega: { label: view, ok: s => FLOW.view(s) !== view, expectBroken: true } } }).broken[0].path;
+const HAPPY = pathTo(TOKENS.happy);
+const BAD = CHECK.broken[0].path;
+const BAD_LAST = String(BAD[BAD.length - 1].view);
+
+// Page: the rule sits at the foot in accent hand lettering, the chart takes everything above it.
+const M = TOKENS.pageM * U;
+const RULE = TOKENS.ruleSz * U, RULE_LEAD = 1.45 * RULE;
+const RULE_LINES = Flipbook.wrap(TOKENS.rule, W - 2 * M, RULE);
+const RULE_BASE = H - M - 0.4 * RULE - RULE_LEAD * (RULE_LINES.length - 1); // baseline of the first rule line
+const CHART_H = RULE_BASE - RULE - 0.6 * RULE;                              // chart ends just above the rule
+
+// One layout for the whole walk. Boxes at boxSz, edge labels at 0.8 of it; the extra height goes into the gaps.
+// fit: a frame too short for boxSz (9:16 or 16:9) shrinks the boxes instead of failing.
+const L = Flipbook.layoutFlow(CHECK, { w: W, h: CHART_H, dir: 'TB', sz: TOKENS.boxSz * U, fit: true });
+const edgeIndex = (path, k) => L.edges.findIndex(e => e.from === String(path[k].view) && e.to === String(path[k + 1].view) && e.step === path[k + 1].step);
+const pathEdges = path => path.slice(1).map((_, k) => edgeIndex(path, k));
+const HAPPY_EDGES = pathEdges(HAPPY), BAD_EDGES = pathEdges(BAD);
+
+// Timeline: draw the chart, walk the happy path, walk the broken path, then park on the rule.
+const H1 = Flipbook.flowBeats(HAPPY, FPS, { layout: L });
+const H2 = Flipbook.flowBeats(BAD, FPS, { layout: L });
+const A1 = TOKENS.drawFrames, A2 = A1 + H1.total;
+const BAD_HOLD = A2 + H2.list.find(b => b.name === `hold${BAD.length - 1}`).start;
+const T = Flipbook.beats([
+  { name: 'dibuja', frames: A1 },
+  ...H1.list.map(b => ({ name: `feliz ${b.name}`, frames: b.frames, say: b.say ?? undefined })),
+  ...H2.list.map(b => ({ name: `roto ${b.name}`, frames: b.frames, say: b.say ?? undefined })),
+  { name: 'regla', frames: Flipbook.readingFrames(TOKENS.rule, FPS), say: TOKENS.rule }
+], FPS);
+
+// Draw order while the chart draws itself: each card, then the edges that leave it.
+const DRAW_ORDER = [...L.boxes].sort((p, q) => p.rank - q.rank || p.x - q.x)
+  .flatMap(b => [{ box: b.id }, ...L.edges.flatMap((e, i) => (e.from === b.id ? [{ edge: i }] : []))]);
+
+// Edges walked so far on a path, plus the one the token is travelling along.
+const walked = (path, edges, st) => [...edges.filter((_, k) => st.visited.includes(String(path[k + 1].view))), ...st.trace];
+
+// Multi-line hand lettering, centred at p.x, first baseline at p.y.
+function say(f, text, p, col, a) {
+  Flipbook.wrap(text, p.maxW, p.sz).forEach((line, k) =>
+    Flipbook.write(f.ctx, f.R, line, p.x, p.y + k * p.sz * 1.45, p.sz, { cen: p.cen, col, a }));
+}
+
+function render(f) {
+  const { ctx, R, frame: n } = f;
+  f.paper();
+
+  let st = null, reveal = null, path = null, edges = null;
+  if (n < A1) {
+    reveal = { edges: {}, boxes: {} };
+    DRAW_ORDER.forEach((el, k) => {
+      const p = Flipbook.seg(n, 2 + k * 2.6, 6 + k * 2.6);
+      if (el.box !== undefined) reveal.boxes[el.box] = p;
+      else reveal.edges[el.edge] = p;
+    });
+  } else if (n < A2) { st = H1.flowAt(n - A1); path = HAPPY; edges = HAPPY_EDGES; }
+  else { st = H2.flowAt(n - A2); path = BAD; edges = BAD_EDGES; }
+
+  Flipbook.drawFlow(f, L, {
+    reveal, visited: st?.visited, trace: st ? walked(path, edges, st) : [],
+    active: st?.active, token: st?.token, emphasis: BAD_LAST
+  });
+  if (st?.token) {
+    const [x, y] = Flipbook.flowPoint(L, st.token);
+    f.probe('tokenX!', x);
+    f.probe('tokenY!', y);
+  }
+
+  if (n >= BAD_HOLD) say(f, TOKENS.rule, { x: W / 2, y: RULE_BASE, cen: true, maxW: W - 2 * M, sz: RULE }, f.m.inks[0], 0.95 * Flipbook.seg(n, BAD_HOLD, BAD_HOLD + 10));
+}
+
+window.anim = new Flipbook.Animator(canvas, render, {
+  width: W, height: H, fps: FPS, frames: T.total, seed: 42, boilHold: 2, boilVariants: 3,
+  loop: false, restFrame: T.total - 1, beats: T, material: 'pencil'
+});
+window.anim.play();
+</script>
+</body>
+</html>

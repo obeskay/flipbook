@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="es-MX">
+<head>
+<meta charset="utf-8">
+<title>Fixture: escena buena</title>
+<style>html,body{margin:0;background:#e9e2d0}canvas{display:block;margin:0 auto}</style>
+<script src="../../skills/flipbook/engine/flipbook.js"></script>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+const TOKENS = { label: 'Hola, mañana', size: 56 };
+const canvas = document.getElementById('c');
+
+function disc(cx, cy, r, n = 28) {
+  const pts = [];
+  for (let k = 0; k < n; k++) {
+    const a = (k / n) * Math.PI * 2;
+    pts.push([cx + Math.cos(a) * r, cy + Math.sin(a) * r]);
+  }
+  return pts;
+}
+
+function render(f) {
+  const { ctx, R, w, h, t, unit, m } = f;
+  f.paper();
+  f.m.substrate(ctx, R, w, h);
+  const phase = t * Math.PI * 2;
+  const cx = w * (0.5 + 0.2 * Math.sin(phase));
+  const cy = h * 0.6;
+  const r = 150 * unit;
+  f.m.fill(ctx, R, disc(cx, cy, r), m.inks[0]);
+  f.m.stroke(ctx, R, disc(cx, cy, r), m.ink, { w: 2.4 * unit });
+  Flipbook.write(ctx, R, TOKENS.label, w * 0.5, h * 0.18, TOKENS.size * unit, { cen: true, col: m.ink });
+  f.probe('swing', Math.sin(phase));
+}
+
+window.anim = new Flipbook.Animator(canvas, render, {
+  width: 1080, height: 1080, fps: 12, frames: 24, boilHold: 2, boilVariants: 3, loop: true, seed: 7
+});
+window.anim.play();
+</script>
+</body>
+</html>
