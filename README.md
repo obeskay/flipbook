@@ -61,6 +61,8 @@ It does not draw from a text prompt alone: a scene is meant to start from the cl
 /plugin install flipbook --marketplace obeskay/flipbook
 ```
 
+That needs Claude Code 2.1.275 or later. On older versions: `/plugin marketplace add obeskay/flipbook`, then `/plugin install flipbook@flipbook`.
+
 ### As a plain skill
 
 From the repo root, symlink `skills/flipbook` into your agent's skills folder. For Claude Code that is `~/.claude/skills`:
