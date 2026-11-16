@@ -23,7 +23,7 @@ The loop also runs on its own. It needs Node 22 or later, Google Chrome (or `CHR
 ```bash
 git clone https://github.com/obeskay/flipbook && cd flipbook/skills/flipbook
 node scripts/new.mjs taqueria ./mi-flujo                    # a copy of the closest recipe
-node scripts/model.mjs ./mi-flujo/flow.js                   # the planted bug and the shortest path to it
+node scripts/model.mjs ./mi-flujo/flow.js                   # the planted bug, its shortest path (declared expected: exit 0)
 node scripts/lint.mjs ./mi-flujo/scene.html                 # PASS, or the defect code and its fix
 node scripts/check.mjs ./mi-flujo/scene.html --format 1:1   # real pixels, PASS in about 20 s
 node scripts/render.mjs ./mi-flujo/scene.html --format 1:1 --fast --sheet --onion
@@ -51,7 +51,7 @@ The sheet runs left to right, top to bottom: crayon, watercolor, charcoal, riso,
 
 ## What it does not do
 
-It does not draw from a text prompt alone: every scene starts from one of the five recipes and is edited from there. It is not a vector editor or a 3D tool, it draws on a 12 frames per second clock, the hand-drawn cadence, and it adds a soundtrack you supply rather than making one. Rendering needs a local Chrome and ffmpeg.
+It does not draw from a text prompt alone: a scene is meant to start from the closest of the five recipes and be edited from there. It is not a vector editor or a 3D tool, it draws on a 12 frames per second clock, the hand-drawn cadence, and it adds a soundtrack you supply rather than making one. Rendering needs a local Chrome and ffmpeg.
 
 ## Install
 
