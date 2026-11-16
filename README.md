@@ -1,10 +1,37 @@
 # flipbook
 
-Flipbook turns a process, numbers, an SVG or a script into a hand-drawn animation, and checks the rendered pixels before you ship it.
+**Hand-drawn animation from a process, numbers, an SVG or a script, checked on the rendered pixels before it ships.**
 
-![Taquería flow, drawn and model-checked](assets/taqueria.png)
+An agent skill. It writes one HTML scene, renders it in Chrome, and reads the frames back: a beat too short to read, labels off the frame or on top of each other, a loop that jumps at the seam, paper that boils. A process is model-checked while it is drawn, so a broken rule shows up as a red path, not a bug report.
 
-The example plants a bug on purpose: paying never checks whether the trompo still has meat. `model.mjs` searches every reachable state and reports the shortest path to the broken rule (order, the pastor runs out, pay, no tacos), and the drawing traces that path in red.
+![The taquería flow drawing itself; the token walks every path and stops on the broken rule](assets/taqueria.webp)
+
+The example plants a bug on purpose: paying never checks whether the trompo still has meat. `model.mjs` searches every reachable state and reports the shortest path to the broken rule (order, the pastor runs out, pay, no tacos), and the drawing traces that path in red. The loop above is that scene, rendered by `render.mjs` from a fresh `new.mjs taqueria`.
+
+## Quick start
+
+In Claude Code:
+
+```bash
+/plugin install flipbook --marketplace obeskay/flipbook
+```
+
+Then ask for *"draw our refund flow and show me where it breaks"*.
+
+The loop also runs on its own. It needs Node 22 or later, Google Chrome (or `CHROME` set to its path) and ffmpeg; there is nothing to install:
+
+```bash
+git clone https://github.com/obeskay/flipbook && cd flipbook/skills/flipbook
+node scripts/new.mjs taqueria ./mi-flujo                    # a copy of the closest recipe
+node scripts/model.mjs ./mi-flujo/flow.js                   # the planted bug and the shortest path to it
+node scripts/lint.mjs ./mi-flujo/scene.html                 # PASS, or the defect code and its fix
+node scripts/check.mjs ./mi-flujo/scene.html --format 1:1   # real pixels, PASS in about 20 s
+node scripts/render.mjs ./mi-flujo/scene.html --format 1:1 --fast --sheet --onion
+```
+
+In a few seconds `mi-flujo/out/scene/` holds a contact sheet and an onion skin, every frame stacked so the spacing shows the easing. Drop `--fast` and add `--mp4`, `--gif` or `--sticker` for the deliverable.
+
+## What it makes
 
 | Input | Recipe | What comes back |
 |---|---|---|
@@ -22,7 +49,19 @@ Outputs: MP4, WhatsApp-ready MP4, GIF, WebM, PNG, one-file HTML and animated Web
 
 The sheet runs left to right, top to bottom: crayon, watercolor, charcoal, riso, mokuhanga, cyanotype, gouache, engraving, suminagashi, pencil.
 
+## What it does not do
+
+It does not draw from a text prompt alone: every scene starts from one of the five recipes and is edited from there. It is not a vector editor or a 3D tool, it draws on a 12 frames per second clock, the hand-drawn cadence, and it adds a soundtrack you supply rather than making one. Rendering needs a local Chrome and ffmpeg.
+
 ## Install
+
+### As a Claude Code plugin
+
+```bash
+/plugin install flipbook --marketplace obeskay/flipbook
+```
+
+### As a plain skill
 
 From the repo root, symlink `skills/flipbook` into your agent's skills folder. For Claude Code that is `~/.claude/skills`:
 
@@ -30,9 +69,7 @@ From the repo root, symlink `skills/flipbook` into your agent's skills folder. F
 ln -s "$PWD/skills/flipbook" ~/.claude/skills/flipbook
 ```
 
-You need Node 22 or later, Google Chrome (or set `CHROME` to its path), and ffmpeg.
-
-## Loop
+## The loop
 
 Run these from `skills/flipbook`:
 
